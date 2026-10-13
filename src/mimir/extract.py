@@ -24,7 +24,12 @@ import numpy as np
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".heic", ".webp", ".tiff", ".tif", ".bmp", ".gif"}
 AUDIO_SUFFIXES = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".aiff", ".aif"}
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".ts"}
-TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".rst", ".csv"}
+# Read as-is.
+PLAIN_SUFFIXES = {".txt", ".md", ".markdown", ".rst", ".csv"}
+# Converted to text by macOS textutil, so no dependency is added. On a real Downloads
+# folder these were 9 of 107 files and were being skipped silently.
+CONVERTED_SUFFIXES = {".docx", ".doc", ".rtf", ".odt", ".html", ".htm", ".wordml", ".webarchive"}
+TEXT_SUFFIXES = PLAIN_SUFFIXES | CONVERTED_SUFFIXES
 
 AUDIO_WINDOW = 30.0   # the model listens to 30 s at a time
 AUDIO_HOP = 25.0      # 5 s overlap, so a word on a boundary is still whole in one window
@@ -187,8 +192,19 @@ def pdf_items(path: Path) -> list[Item]:
     return items
 
 
+def read_document(path: Path) -> str:
+    """A document's text. Plain text is read directly; everything else goes through textutil."""
+    if path.suffix.lower() in PLAIN_SUFFIXES:
+        return path.read_text(errors="ignore")
+    result = subprocess.run(["textutil", "-convert", "txt", "-stdout", str(path)],
+                            capture_output=True, timeout=120)
+    if result.returncode != 0:
+        raise RuntimeError(f"textutil failed: {result.stderr.decode('utf-8', 'ignore').strip()[:200]}")
+    return result.stdout.decode("utf-8", errors="ignore")
+
+
 def text_items(path: Path) -> list[Item]:
-    text = path.read_text(errors="ignore").strip()
+    text = read_document(path).strip()
     items: list[Item] = []
     for start in range(0, len(text), max(CHUNK - CHUNK_OVERLAP, 1)):
         piece = text[start:start + CHUNK].strip()

@@ -107,7 +107,11 @@ def index_file(store: Store, embedder, path: Path, kind: str, workdir: Path,
     return written
 
 
-def discover(root: Path, skip_hidden: bool = True) -> list[tuple[Path, str]]:
+def discover(root: Path, skip_hidden: bool = True,
+             include_video: bool = False) -> list[tuple[Path, str]]:
+    """Every indexable file. Video is left out unless asked for: it is by far the most
+    expensive thing to index (a folder of 6 hours of video cost ~2.5 hours, almost all of it
+    writing captions for frames), and one long episode can turn a one-minute index into hours."""
     found = []
     for path in sorted(root.rglob("*")):
         if not path.is_file():
@@ -115,16 +119,27 @@ def discover(root: Path, skip_hidden: bool = True) -> list[tuple[Path, str]]:
         if skip_hidden and any(part.startswith(".") for part in path.relative_to(root).parts):
             continue
         kind = kind_of(path)
-        if kind:
-            found.append((path, kind))
+        if kind is None:
+            continue
+        if kind == "video" and not include_video:
+            continue
+        found.append((path, kind))
     return found
 
 
 def index_folder(store: Store, root: Path, embedder_factory, transcriber_factory=None,
-                 captioner_factory=None, skip_hidden: bool = True) -> tuple[int, int]:
+                 captioner_factory=None, skip_hidden: bool = True,
+                 include_video: bool = False) -> tuple[int, int]:
     """Phase 1 speech, phase 2 captions, phase 3 embeddings. Each factory returns a model with
     `.close()`, or None when that model is unavailable or switched off."""
-    targets = discover(root, skip_hidden)
+    targets = discover(root, skip_hidden, include_video)
+    if not include_video:
+        videos = sum(1 for p in root.rglob('*')
+                     if p.is_file() and kind_of(p) == 'video')
+        if videos:
+            print(f"skipping {videos} video files (pass --video to index them; "
+                  f"frames and transcripts make them far slower than everything else)",
+                  flush=True)
     files = skipped = 0
     # One workdir for the whole run: frames cut in phase 2 must still be there in phase 3.
     with tempfile.TemporaryDirectory(prefix="mimir-") as temp:

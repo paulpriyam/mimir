@@ -38,6 +38,8 @@ stt = ["mlx-whisper>=0.4"]
 rerank = ["httpx>=0.28"]
 # Expose search to Claude/Cursor over MCP (v1).
 mcp = ["mcp>=1.2"]
+# The local web UI. starlette and uvicorn already arrive with mcp; listed for clarity.
+ui = ["starlette>=0.40", "uvicorn>=0.30"]
 dev = ["pytest>=8.3"]
 
 [build-system]

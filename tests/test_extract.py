@@ -8,7 +8,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from mimir.extract import audio_items, extract, kind_of, pdf_items, text_items, video_items
+from mimir.extract import (audio_items, extract, kind_of, pdf_items, read_document,
+                           text_items, video_items)
 
 
 def test_kind_of_covers_every_supported_family():
@@ -18,7 +19,9 @@ def test_kind_of_covers_every_supported_family():
     assert kind_of(Path("a.mov")) == "video"
     assert kind_of(Path("a.pdf")) == "pdf"
     assert kind_of(Path("a.md")) == "doc"
-    assert kind_of(Path("a.docx")) is None
+    assert kind_of(Path("a.docx")) == "doc"      # via textutil
+    assert kind_of(Path("a.rtf")) == "doc"
+    assert kind_of(Path("a.xyz")) is None
 
 
 def test_text_items_chunk_and_carry_an_offset():
@@ -109,3 +112,18 @@ def test_pdf_pages_are_numbered():
     pdf.unlink()
     assert items and items[0].kind == "page" and items[0].loc == 1.0
     assert "pets" in items[0].text
+
+
+def test_read_document_converts_a_real_docx():
+    """docx is not text and was being skipped silently; textutil covers it with no dependency."""
+    source = Path("/tmp/mimir-test-doc.txt")
+    docx = Path("/tmp/mimir-test-doc.docx")
+    source.write_text("Section 7. The tenant may keep pets in the apartment.\n")
+    subprocess.run(["textutil", "-convert", "docx", str(source), "-output", str(docx)], check=True)
+    try:
+        assert "pets" in read_document(docx)
+        items = text_items(docx)
+        assert items and "pets" in items[0].text
+    finally:
+        source.unlink(missing_ok=True)
+        docx.unlink(missing_ok=True)

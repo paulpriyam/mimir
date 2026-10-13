@@ -71,7 +71,8 @@ def cmd_index(args) -> int:
 
         return Captioner() if available() else None
 
-    files, skipped = index_folder(store, root, embedder_factory, transcriber_factory, captioner_factory)
+    files, skipped = index_folder(store, root, embedder_factory, transcriber_factory,
+                                   captioner_factory, include_video=args.video)
     total_files, segments = store.count()
     print(f"indexed {files} files ({skipped} skipped); index now holds {total_files} files, {segments} segments")
     store.close()
@@ -143,6 +144,12 @@ def cmd_info(args) -> int:
     return 0
 
 
+def cmd_ui(args) -> int:
+    from .ui import serve
+
+    return serve(args.index_dir, port=args.port, open_browser=not args.no_open)
+
+
 def cmd_mcp(args) -> int:
     from .mcp_server import serve
 
@@ -159,6 +166,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path")
     p.add_argument("--no-transcribe", action="store_true", help="skip the speech phase")
     p.add_argument("--no-caption", action="store_true", help="skip the image caption phase")
+    p.add_argument("--video", action="store_true",
+                   help="also index video (frames, captions and transcript; much slower)")
     p.set_defaults(func=cmd_index)
 
     p = sub.add_parser("search", help="search the index")
@@ -176,6 +185,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("info", help="what the index holds")
     p.set_defaults(func=cmd_info)
+
+    p = sub.add_parser("ui", help="open the local web UI")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--no-open", action="store_true", help="do not open a browser")
+    p.set_defaults(func=cmd_ui)
 
     p = sub.add_parser("mcp", help="serve the index to MCP clients (Claude, Cursor) over stdio")
     p.set_defaults(func=cmd_mcp)

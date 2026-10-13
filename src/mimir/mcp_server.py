@@ -19,6 +19,7 @@ import threading
 from pathlib import Path
 
 from .config import MAIN_DB, QUERY_PROMPT
+from .deep import deep_search
 from .search import Hit, Searcher
 from .store import Store
 
@@ -59,8 +60,10 @@ class MimirSearch:
         # should show. Falls back to the index directory when no root was recorded.
         self.root = Path(self.store.meta("root") or self.index_dir)
         self._embedder = embedder
-        # MCP runs tool functions on a worker thread, and SQLite connections are not
-        # thread-safe: one lock serializes every call that touches the store.
+        self._reranker = None
+        self._reranker_checked = False
+        # MCP and the web UI run request handlers on worker threads, and SQLite connections are
+        # not thread-safe: one lock serializes every call that touches the store.
         self._lock = threading.Lock()
 
     @property
@@ -71,12 +74,48 @@ class MimirSearch:
             self._embedder = WorkerEmbedder(text_only=True)
         return self._embedder
 
-    def search(self, query: str, limit: int = 10, kind: str | None = None) -> list[dict]:
+    @property
+    def reranker(self):
+        """The cross-encoder, started once on first use, or None when it has not been fetched."""
+        if not self._reranker_checked:
+            self._reranker_checked = True
+            from .rerank import Reranker, RerankerUnavailable, available
+
+            if available():
+                try:
+                    self._reranker = Reranker()
+                except RerankerUnavailable:
+                    self._reranker = None
+        return self._reranker
+
+    def search(self, query: str, limit: int = 10, kind: str | None = None,
+               deep: bool = False) -> list[dict]:
+        limit = max(1, min(limit, 50))
+        kinds = {kind} if kind else None
         with self._lock:
             vector = self.embedder.embed_text([query], QUERY_PROMPT)[0]
-            hits = self.searcher.search(query, query_vector=vector,
-                                        kinds={kind} if kind else None, limit=max(1, min(limit, 50)))
+            reranker = self.reranker if deep else None
+            if reranker is not None:
+                hits = deep_search(self.store, self.searcher, reranker, query,
+                                   query_vector=vector, limit=limit, kinds=kinds)
+            else:
+                hits = self.searcher.search(query, query_vector=vector, kinds=kinds, limit=limit)
             return [hit_to_dict(hit, self.root) for hit in hits]
+
+    def info(self) -> dict:
+        files, segments = self.store.count()
+        return {"index": str(self.index_dir), "root": str(self.root), "files": files,
+                "segments": segments, "model": self.store.meta("model"),
+                "deep_available": self.reranker is not None}
+
+    def open_file(self, path: str, reveal: bool = False) -> bool:
+        """Open a file in its default app, or show it in Finder. Never reads or changes it."""
+        import subprocess
+
+        if not Path(path).exists():
+            return False
+        command = ["open", "-R", path] if reveal else ["open", path]
+        return subprocess.run(command, capture_output=True).returncode == 0
 
     def read(self, path: str) -> str:
         """The text the index holds for a file: its chunks, pages or transcript."""
@@ -98,6 +137,8 @@ class MimirSearch:
         return "\n\n".join(pieces)
 
     def close(self) -> None:
+        if self._reranker is not None:
+            self._reranker.close()
         if self._embedder is not None:
             self._embedder.close()
         self.store.close()
@@ -114,16 +155,20 @@ def build_server(index_dir: str | Path):
     server = MCPServer("mimir")
 
     @server.tool()
-    def mimir_search(query: str, limit: int = 10, kind: str | None = None) -> list[dict]:
+    def mimir_search(query: str, limit: int = 10, kind: str | None = None,
+                     deep: bool = False) -> list[dict]:
         """Search the user's own files by meaning and by exact words.
 
         Covers pictures, screenshots (their text), documents, PDF pages, recordings and video.
         A result's `loc` is a PDF page or a number of seconds, so it can be opened at the exact
         place. `kind` filters to one of: image, pdf, doc, audio, video.
 
+        `deep` reranks candidates with a cross-encoder: slower, finds more, and needs the
+        reranker runtime from scripts/fetch_reranker.py.
+
         Returns [] when nothing is a good enough match, rather than a weak guess.
         """
-        return search.search(query, limit=limit, kind=kind)
+        return search.search(query, limit=limit, kind=kind, deep=deep)
 
     @server.tool()
     def mimir_read(path: str) -> str:

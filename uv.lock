@@ -621,6 +621,10 @@ rerank = [
 stt = [
     { name = "mlx-whisper" },
 ]
+ui = [
+    { name = "starlette" },
+    { name = "uvicorn" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -639,9 +643,11 @@ requires-dist = [
     { name = "pyobjc-framework-quartz", marker = "extra == 'media'", specifier = ">=11" },
     { name = "pyobjc-framework-vision", marker = "extra == 'media'", specifier = ">=11" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
+    { name = "starlette", marker = "extra == 'ui'", specifier = ">=0.40" },
     { name = "transformers", marker = "extra == 'embed'", specifier = "==5.19.0" },
+    { name = "uvicorn", marker = "extra == 'ui'", specifier = ">=0.30" },
 ]
-provides-extras = ["embed", "media", "stt", "rerank", "mcp", "dev"]
+provides-extras = ["embed", "media", "stt", "rerank", "mcp", "ui", "dev"]
 
 [[package]]
 name = "miniaudio"

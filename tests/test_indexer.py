@@ -14,24 +14,46 @@ from mimir.indexer import index_folder
 from mimir.store import Store
 
 
-def test_video_frames_are_captioned(tmp_path):
-    """A frame must carry text, or it can be neither keyword-matched nor reranked."""
+def make_video(path, seconds=4):
+    """A tiny real video, encoded with PyAV so the frame path is exercised for real."""
     av = pytest.importorskip("av")
-    from mimir.embed import FakeEmbedder
-
-    video = tmp_path / "clip.mp4"
-    container = av.open(str(video), mode="w")
+    container = av.open(str(path), mode="w")
     stream = container.add_stream("libx264", rate=8)
     stream.width = stream.height = 64
     stream.pix_fmt = "yuv420p"
     picture = np.zeros((64, 64, 3), np.uint8)
     picture[:, :] = (200, 30, 30)
-    for _ in range(4 * 8):
+    for _ in range(seconds * 8):
         for packet in stream.encode(av.VideoFrame.from_ndarray(picture, format="rgb24")):
             container.mux(packet)
     for packet in stream.encode():
         container.mux(packet)
     container.close()
+    return path
+
+
+def test_video_is_skipped_unless_asked_for(tmp_path):
+    """Video is by far the most expensive thing to index, so it is opt-in."""
+    from mimir.embed import FakeEmbedder
+
+    make_video(tmp_path / "clip.mp4")
+    store = Store(tmp_path / "index.sqlite")
+    files, _ = index_folder(store, tmp_path, lambda: FakeEmbedder())
+    store.close()
+    assert files == 0, "video must not be indexed without include_video"
+
+    store = Store(tmp_path / "index2.sqlite")
+    files, _ = index_folder(store, tmp_path, lambda: FakeEmbedder(), include_video=True)
+    frames = store.db.execute("SELECT COUNT(*) n FROM segments WHERE kind = 'frame'").fetchone()["n"]
+    store.close()
+    assert files == 1 and frames > 0
+
+
+def test_video_frames_are_captioned(tmp_path):
+    """A frame must carry text, or it can be neither keyword-matched nor reranked."""
+    from mimir.embed import FakeEmbedder
+
+    make_video(tmp_path / "clip.mp4")
 
     class StubCaptioner:
         info = {"model": "stub"}
@@ -44,7 +66,7 @@ def test_video_frames_are_captioned(tmp_path):
 
     store = Store(tmp_path / "index.sqlite")
     files, _ = index_folder(store, tmp_path, lambda: FakeEmbedder(), lambda: None,
-                            lambda: StubCaptioner())
+                            lambda: StubCaptioner(), include_video=True)
     frames = store.db.execute("SELECT loc FROM segments WHERE kind = 'frame'").fetchall()
     captions = store.db.execute("SELECT loc, excerpt FROM segments WHERE kind = 'caption'").fetchall()
     store.close()
