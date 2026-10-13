@@ -30,6 +30,9 @@ SPEECH = {
                           "eggs, the melted butter and the milk, and stir until the batter is smooth. Pour it into "
                           "a greased pan and bake for thirty five minutes. When the cake has cooled down "
                           "completely, spread the frosting on top and decorate it with fresh strawberries.",
+    # A code spoken aloud, and written nowhere: only a transcript can make it findable exactly.
+    "speech_invoice": "Invoice number ZQ dash seven seven three four is now overdue. "
+                      "Please settle the balance of four thousand two hundred by Friday.",
 }
 
 SCREENSHOTS = {

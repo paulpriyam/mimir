@@ -20,6 +20,13 @@ DOC_PROMPT = "title: none | text: {text}"
 INDEX_DIR = Path(os.environ.get("MIMIR_INDEX", Path.home() / ".mimir")).expanduser()
 MAIN_DB = "index.sqlite"
 
+# --- Speech ---------------------------------------------------------------------------
+# Timestamped transcripts for audio and video, so exact words inside speech are findable.
+# Off with MIMIR_TRANSCRIBE=0. Turbo is 809M params and covers 99 languages including Hindi
+# and Bengali; Parakeet is faster but only covers 25 European languages.
+WHISPER_MODEL = os.environ.get("MIMIR_WHISPER", "mlx-community/whisper-large-v3-turbo")
+TRANSCRIBE = os.environ.get("MIMIR_TRANSCRIBE", "1") != "0"
+
 # --- Retrieval -----------------------------------------------------------------------
 # How far the best segment must stand out (in per-query standard deviations) to count as a
 # meaning match. Also what makes "nothing found" honest. DigUp's default, kept.

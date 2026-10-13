@@ -191,6 +191,17 @@ def text_items(path: Path) -> list[Item]:
 
 # --- Dispatch -----------------------------------------------------------------------
 
+def transcripts(path: Path) -> list[Item]:
+    """Transcript segments for audio/video, if the stt extra is installed and enabled."""
+    from .transcribe import transcribe_items
+
+    try:
+        return transcribe_items(path)
+    except Exception as error:
+        print(f"  ! transcript failed for {path.name}: {type(error).__name__}: {error}")
+        return []
+
+
 def to_jpeg(path: Path, workdir: Path) -> Path:
     """The vision tower reads jpeg/png; anything else is converted with sips first."""
     if path.suffix.lower() in {".jpg", ".jpeg", ".png"}:
@@ -209,9 +220,9 @@ def extract(path: Path, kind: str, workdir: Path) -> list[Item]:
             items.append(Item("ocr", "text", text=found, excerpt=found[:200]))
         return items
     if kind == "audio":
-        return audio_items(path, workdir)
+        return audio_items(path, workdir) + transcripts(path)
     if kind == "video":
-        return video_items(path, workdir)
+        return video_items(path, workdir) + transcripts(path)
     if kind == "pdf":
         return pdf_items(path)
     if kind == "text":

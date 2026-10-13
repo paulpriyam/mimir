@@ -16,6 +16,7 @@
     {"q": "a flight delayed by a storm", "expect": ["audio/speech_flight_delay.wav"], "tag": "audio"},
     {"q": "baking a chocolate cake", "expect": ["audio/speech_cake_recipe.wav"], "tag": "audio"},
     {"q": "quarterly revenue grew in Europe", "expect": ["audio/speech_revenue.wav"], "tag": "audio"},
+    {"q": "ZQ-7734", "expect": ["audio/speech_invoice.wav"], "tag": "audio-exact"},
 
     {"q": "may I keep pets in the apartment", "expect": ["pdf/lease.pdf"], "tag": "pdf-page"},
     {"q": "fire drill procedure", "expect": ["pdf/handbook.pdf@6-6"], "tag": "pdf-page"},
