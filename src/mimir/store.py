@@ -135,6 +135,24 @@ class Store:
         self.db.commit()
         return file_id
 
+    def file_fingerprints(self) -> dict[str, tuple[int, float, str | None]]:
+        """Every indexed file as {path: (size, mtime, content_hash)}, for deciding what changed."""
+        return {
+            row["path"]: (row["size"], row["mtime"], row["content_hash"])
+            for row in self.db.execute("SELECT path, size, mtime, content_hash FROM files")
+        }
+
+    def delete_file(self, path: str) -> bool:
+        """Drop a file and everything indexed from it."""
+        row = self.db.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
+        if row is None:
+            return False
+        for segment in self.db.execute("SELECT id FROM segments WHERE file = ?", (row["id"],)):
+            self.db.execute("DELETE FROM fts WHERE rowid = ?", (segment["id"],))
+        self.db.execute("DELETE FROM files WHERE id = ?", (row["id"],))   # cascades to segments
+        self.db.commit()
+        return True
+
     def file_kinds(self) -> dict[int, str]:
         return {r["id"]: r["kind"] for r in self.db.execute("SELECT id, kind FROM files")}
 

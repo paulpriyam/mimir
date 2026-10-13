@@ -21,6 +21,7 @@ video-moment R@1 falling from 0.86 to 0.29 under deep search.
 from __future__ import annotations
 
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -84,25 +85,28 @@ def index_file(store: Store, embedder, path: Path, kind: str, workdir: Path,
     """Index one file. `prepared` is the item list already built by an earlier phase."""
     items = prepared if prepared is not None else extract(path, kind, workdir,
                                                           transcript=transcript, caption=caption)
-    if not items:
-        return 0
-    vectors = embed_items(embedder, items)
     stat = path.stat()
     file_id = store.add_file(str(path), kind, stat.st_size, stat.st_mtime,
                              content_hash(path.read_bytes()), file_info(path, kind, items))
+    # The name segment is written even when nothing was extractable: a scanned PDF with no text
+    # layer should still be findable by its file name, and recording the file stops the next
+    # pass from re-attempting it forever.
     store.add_segment(file_id, "name", "text", text=path.name)
     written = 1
-    for item in items:
-        vector = vectors.get(id(item))
-        if vector is None and item.text is None:
-            continue
-        store.add_segment(
-            file_id, item.kind, item.modality, loc=item.loc, loc_end=item.loc_end,
-            vec=vec_blob(vector) if vector is not None else None,
-            excerpt=item.excerpt, text=item.text,
-            model_id=embedder.info.get("model"), dim=embedder.dim if vector is not None else None,
-        )
-        written += 1
+    if items:
+        vectors = embed_items(embedder, items)
+        for item in items:
+            vector = vectors.get(id(item))
+            if vector is None and item.text is None:
+                continue
+            store.add_segment(
+                file_id, item.kind, item.modality, loc=item.loc, loc_end=item.loc_end,
+                vec=vec_blob(vector) if vector is not None else None,
+                excerpt=item.excerpt, text=item.text,
+                model_id=embedder.info.get("model"),
+                dim=embedder.dim if vector is not None else None,
+            )
+            written += 1
     store.commit()
     return written
 
@@ -127,29 +131,87 @@ def discover(root: Path, skip_hidden: bool = True,
     return found
 
 
+@dataclass
+class IndexResult:
+    """What one pass did. `changed` is what a watch loop waits for."""
+    added: int = 0
+    updated: int = 0
+    unchanged: int = 0
+    removed: int = 0
+    skipped: int = 0
+
+    @property
+    def changed(self) -> int:
+        return self.added + self.updated + self.removed
+
+    def describe(self) -> str:
+        return (f"{self.added} new, {self.updated} changed, {self.unchanged} unchanged, "
+                f"{self.removed} removed, {self.skipped} skipped")
+
+
+def _under(path: str, root: Path) -> bool:
+    return path == str(root) or path.startswith(str(root) + "/")
+
+
 def index_folder(store: Store, root: Path, embedder_factory, transcriber_factory=None,
                  captioner_factory=None, skip_hidden: bool = True,
-                 include_video: bool = False) -> tuple[int, int]:
-    """Phase 1 speech, phase 2 captions, phase 3 embeddings. Each factory returns a model with
-    `.close()`, or None when that model is unavailable or switched off."""
+                 include_video: bool = False) -> IndexResult:
+    """One incremental pass: phase 1 speech, phase 2 captions, phase 3 embeddings.
+
+    Only files whose size or modification time changed are looked at, so a re-scan of an
+    unchanged folder costs a few stat calls and loads no model at all. Files that vanished are
+    dropped. Each phase owns exactly one model and closes it before the next opens, which keeps
+    peak memory at the largest single model rather than their sum.
+    """
+    root = root.resolve()
     targets = discover(root, skip_hidden, include_video)
     if not include_video:
-        videos = sum(1 for p in root.rglob('*')
-                     if p.is_file() and kind_of(p) == 'video')
+        videos = sum(1 for p in root.rglob("*") if p.is_file() and kind_of(p) == "video")
         if videos:
             print(f"skipping {videos} video files (pass --video to index them; "
-                  f"frames and transcripts make them far slower than everything else)",
-                  flush=True)
-    files = skipped = 0
+                  f"frames and transcripts make them far slower than everything else)", flush=True)
+
+    result = IndexResult()
+
+    # What disappeared: indexed files under this root that are no longer on disk.
+    for path in list(store.file_fingerprints()):
+        if _under(path, root) and not Path(path).exists():
+            if store.delete_file(path):
+                result.removed += 1
+
+    # What needs work: new files, or ones whose size/mtime moved. A touched file whose contents
+    # are identical is left alone, so a sync that rewrites mtimes costs nothing.
+    todo: list[tuple[Path, str]] = []
+    known = store.file_fingerprints()
+    for path, kind in targets:
+        try:
+            stat = path.stat()
+        except OSError:
+            result.skipped += 1
+            continue
+        previous = known.get(str(path))
+        if previous and previous[0] == stat.st_size and abs(previous[1] - stat.st_mtime) < 1e-6:
+            result.unchanged += 1
+            continue
+        if previous and previous[2] and previous[0] == stat.st_size:
+            if content_hash(path.read_bytes()) == previous[2]:
+                result.unchanged += 1
+                continue
+        todo.append((path, kind))
+
+    if not todo:
+        return result
+
     # One workdir for the whole run: frames cut in phase 2 must still be there in phase 3.
     with tempfile.TemporaryDirectory(prefix="mimir-") as temp:
         workdir = Path(temp)
 
-        # Phase 1: speech, with only Whisper loaded.
+        # Phase 1: speech, with only Whisper loaded. A model is only started if its phase has
+        # work: a folder of documents should never pay to load Whisper or the caption model.
         transcripts: dict[Path, list[Item]] = {}
-        transcriber = transcriber_factory() if transcriber_factory else None
+        speech = [(path, kind) for path, kind in todo if kind in SPEECH_KINDS]
+        transcriber = transcriber_factory() if (speech and transcriber_factory) else None
         if transcriber:
-            speech = [(path, kind) for path, kind in targets if kind in SPEECH_KINDS]
             print(f"phase 1/3: transcribing {len(speech)} audio/video files", flush=True)
             try:
                 for path, _ in speech:
@@ -164,10 +226,10 @@ def index_folder(store: Store, root: Path, embedder_factory, transcriber_factory
         # frames here so each frame can be captioned, and so the cut is done once.
         captions: dict[Path, str] = {}
         prepared: dict[Path, list[Item]] = {}
-        captioner = captioner_factory() if captioner_factory else None
+        pictures = [path for path, kind in todo if kind == "image"]
+        videos = [path for path, kind in todo if kind == "video"]
+        captioner = captioner_factory() if ((pictures or videos) and captioner_factory) else None
         if captioner:
-            pictures = [path for path, kind in targets if kind == "image"]
-            videos = [path for path, kind in targets if kind == "video"]
             print(f"phase 2/3: captioning {len(pictures)} images and {len(videos)} videos' frames",
                   flush=True)
             try:
@@ -197,17 +259,21 @@ def index_folder(store: Store, root: Path, embedder_factory, transcriber_factory
                 captioner.close()
 
         # Phase 3: embeddings, with only the embedder loaded.
-        print(f"phase 3/3: embedding {len(targets)} files", flush=True)
+        print(f"phase 3/3: embedding {len(todo)} changed files", flush=True)
         embedder = embedder_factory()
         try:
-            for path, kind in targets:
+            for path, kind in todo:
+                existed = str(path) in known
                 try:
                     index_file(store, embedder, path, kind, workdir,
                                transcript=transcripts.get(path), caption=captions.get(path),
                                prepared=prepared.get(path))
-                    files += 1
+                    if existed:
+                        result.updated += 1
+                    else:
+                        result.added += 1
                 except Exception as error:
-                    skipped += 1
+                    result.skipped += 1
                     print(f"  ! {path.name}: {type(error).__name__}: {error}")
             store.set_meta("model", str(embedder.info.get("model")))
             store.set_meta("dim", str(embedder.dim))
@@ -215,4 +281,4 @@ def index_folder(store: Store, root: Path, embedder_factory, transcriber_factory
             embedder.close()
 
     store.set_meta("root", str(root))
-    return files, skipped
+    return result

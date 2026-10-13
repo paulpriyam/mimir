@@ -38,15 +38,15 @@ def test_video_is_skipped_unless_asked_for(tmp_path):
 
     make_video(tmp_path / "clip.mp4")
     store = Store(tmp_path / "index.sqlite")
-    files, _ = index_folder(store, tmp_path, lambda: FakeEmbedder())
+    result = index_folder(store, tmp_path, lambda: FakeEmbedder())
     store.close()
-    assert files == 0, "video must not be indexed without include_video"
+    assert result.added == 0, "video must not be indexed without include_video"
 
     store = Store(tmp_path / "index2.sqlite")
-    files, _ = index_folder(store, tmp_path, lambda: FakeEmbedder(), include_video=True)
+    result = index_folder(store, tmp_path, lambda: FakeEmbedder(), include_video=True)
     frames = store.db.execute("SELECT COUNT(*) n FROM segments WHERE kind = 'frame'").fetchone()["n"]
     store.close()
-    assert files == 1 and frames > 0
+    assert result.added == 1 and frames > 0
 
 
 def test_video_frames_are_captioned(tmp_path):
@@ -65,13 +65,13 @@ def test_video_frames_are_captioned(tmp_path):
             pass
 
     store = Store(tmp_path / "index.sqlite")
-    files, _ = index_folder(store, tmp_path, lambda: FakeEmbedder(), lambda: None,
-                            lambda: StubCaptioner(), include_video=True)
+    result = index_folder(store, tmp_path, lambda: FakeEmbedder(), lambda: None,
+                          lambda: StubCaptioner(), include_video=True)
     frames = store.db.execute("SELECT loc FROM segments WHERE kind = 'frame'").fetchall()
     captions = store.db.execute("SELECT loc, excerpt FROM segments WHERE kind = 'caption'").fetchall()
     store.close()
 
-    assert files == 1
+    assert result.added == 1
     assert frames, "the video produced no frames"
     assert len(captions) == len(frames), "every frame should carry a caption"
     assert {row["loc"] for row in captions} == {row["loc"] for row in frames}
@@ -97,7 +97,7 @@ def test_models_are_loaded_one_phase_at_a_time(tmp_path):
             events.append(("close", self.role))
 
         def transcribe(self, path):
-            raise AssertionError("no audio or video in an empty folder")
+            raise AssertionError("no audio or video expected here")
 
         def caption(self, path):
             raise AssertionError("no images in an empty folder")
@@ -108,20 +108,32 @@ def test_models_are_loaded_one_phase_at_a_time(tmp_path):
         def embed_media(self, kind, paths):
             return np.zeros((len(paths), 4), np.float32), [None] * len(paths)
 
-    root = tmp_path / "empty"
+    root = tmp_path / "docs"
     root.mkdir()
+    (root / "note.txt").write_text("something to index, so every phase actually runs")
     store = Store(tmp_path / "index.sqlite")
-    files, skipped = index_folder(store, root, lambda: Model("embed"),
-                                  lambda: Model("speech"), lambda: Model("caption"))
+    result = index_folder(store, root, lambda: Model("embed"),
+                          lambda: Model("speech"), lambda: Model("caption"))
     store.close()
 
-    assert files == 0
-    assert events == [
-        ("open", "speech"), ("close", "speech"),
-        ("open", "caption"), ("close", "caption"),
-        ("open", "embed"), ("close", "embed"),
-    ]
+    assert result.added == 1
+    # Text only: speech and caption have no work, so their models must not be started at all.
+    assert events == [("open", "embed"), ("close", "embed")]
     assert live == []
+
+
+def test_a_phase_with_no_work_loads_no_model(tmp_path):
+    """Loading Whisper to transcribe zero files is pure cost, so the phase is skipped."""
+    from mimir.embed import FakeEmbedder
+
+    (tmp_path / "note.txt").write_text("just a document")
+    started = []
+    store = Store(tmp_path / "index.sqlite")
+    index_folder(store, tmp_path, lambda: FakeEmbedder(),
+                 lambda: (started.append("speech"), None)[1],
+                 lambda: (started.append("caption"), None)[1])
+    store.close()
+    assert started == []
 
 
 def test_a_missing_model_just_skips_its_phase(tmp_path):
@@ -144,7 +156,87 @@ def test_a_missing_model_just_skips_its_phase(tmp_path):
     root.mkdir()
     store = Store(tmp_path / "index.sqlite")
     # Factories return None when a model is switched off or unavailable.
-    files, _ = index_folder(store, root, lambda: (live.append("embed"), Embedder())[1], lambda: None, lambda: None)
+    result = index_folder(store, root, lambda: (live.append("embed"), Embedder())[1],
+                          lambda: None, lambda: None)
     store.close()
-    assert files == 0
+    assert result.added == 0
     assert live == []
+
+
+def test_unchanged_files_load_no_model_at_all(tmp_path):
+    """A re-scan of a folder nobody touched should cost stat calls, not a model load."""
+    from mimir.embed import FakeEmbedder
+
+    (tmp_path / "note.txt").write_text("hello")
+    store = Store(tmp_path / "index.sqlite")
+    first = index_folder(store, tmp_path, lambda: FakeEmbedder())
+    assert first.added == 1
+
+    opened = []
+    second = index_folder(store, tmp_path, lambda: (opened.append(1), FakeEmbedder())[1])
+    store.close()
+    assert second.added == 0 and second.unchanged == 1
+    assert opened == [], "no model should be constructed when nothing changed"
+
+
+def test_a_changed_file_is_reindexed(tmp_path):
+    from mimir.embed import FakeEmbedder
+
+    note = tmp_path / "note.txt"
+    note.write_text("first version")
+    store = Store(tmp_path / "index.sqlite")
+    assert index_folder(store, tmp_path, lambda: FakeEmbedder()).added == 1
+
+    note.write_text("a completely different second version")
+    import os
+    os.utime(note, (note.stat().st_atime, note.stat().st_mtime + 10))
+    result = index_folder(store, tmp_path, lambda: FakeEmbedder())
+    store.close()
+    assert result.updated == 1 and result.added == 0
+
+
+def test_a_deleted_file_leaves_the_index(tmp_path):
+    from mimir.embed import FakeEmbedder
+
+    note = tmp_path / "note.txt"
+    note.write_text("temporary")
+    store = Store(tmp_path / "index.sqlite")
+    assert index_folder(store, tmp_path, lambda: FakeEmbedder()).added == 1
+
+    note.unlink()
+    result = index_folder(store, tmp_path, lambda: FakeEmbedder())
+    files, _ = store.count()
+    store.close()
+    assert result.removed == 1 and files == 0
+
+
+def test_a_touched_but_identical_file_is_left_alone(tmp_path):
+    """A sync that rewrites mtimes without changing contents should cost nothing."""
+    from mimir.embed import FakeEmbedder
+
+    note = tmp_path / "note.txt"
+    note.write_text("stable contents")
+    store = Store(tmp_path / "index.sqlite")
+    assert index_folder(store, tmp_path, lambda: FakeEmbedder()).added == 1
+
+    import os
+    os.utime(note, (note.stat().st_atime, note.stat().st_mtime + 5))
+    result = index_folder(store, tmp_path, lambda: FakeEmbedder())
+    store.close()
+    assert result.unchanged == 1 and result.changed == 0
+
+
+def test_a_file_with_nothing_extractable_is_still_recorded(tmp_path):
+    """A scanned PDF with no text layer used to be re-attempted on every single run."""
+    from mimir.embed import FakeEmbedder
+
+    (tmp_path / "empty.txt").write_text("")
+    store = Store(tmp_path / "index.sqlite")
+    first = index_folder(store, tmp_path, lambda: FakeEmbedder())
+    files, segments = store.count()
+    assert first.added == 1 and files == 1
+    assert segments == 1, "only the file-name segment should exist"
+
+    second = index_folder(store, tmp_path, lambda: FakeEmbedder())
+    store.close()
+    assert second.unchanged == 1 and second.changed == 0

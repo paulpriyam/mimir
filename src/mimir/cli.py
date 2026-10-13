@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 from .config import INDEX_DIR, MAIN_DB, QUERY_PROMPT
@@ -71,11 +72,26 @@ def cmd_index(args) -> int:
 
         return Captioner() if available() else None
 
-    files, skipped = index_folder(store, root, embedder_factory, transcriber_factory,
-                                   captioner_factory, include_video=args.video)
-    total_files, segments = store.count()
-    print(f"indexed {files} files ({skipped} skipped); index now holds {total_files} files, {segments} segments")
-    store.close()
+    first = True
+    try:
+        while True:
+            result = index_folder(store, root, embedder_factory, transcriber_factory,
+                                  captioner_factory, include_video=args.video)
+            total_files, segments = store.count()
+            if first or result.changed:
+                stamp = time.strftime("%H:%M:%S")
+                print(f"{stamp}  {result.describe()}  —  index holds {total_files} files, "
+                      f"{segments} segments", flush=True)
+            if not args.watch:
+                break
+            if first:
+                print(f"watching {root} every {args.interval}s — Ctrl-C to stop", flush=True)
+                first = False
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("\nstopped watching", flush=True)
+    finally:
+        store.close()
     return 0
 
 
@@ -168,6 +184,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-caption", action="store_true", help="skip the image caption phase")
     p.add_argument("--video", action="store_true",
                    help="also index video (frames, captions and transcript; much slower)")
+    p.add_argument("--watch", action="store_true",
+                   help="keep running and re-index as files are added or changed")
+    p.add_argument("--interval", type=float, default=30.0,
+                   help="seconds between checks in --watch mode (default 30)")
     p.set_defaults(func=cmd_index)
 
     p = sub.add_parser("search", help="search the index")
