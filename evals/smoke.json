@@ -1,0 +1,10 @@
+{
+  "base": "../tests/fixtures",
+  "queries": [
+    {"q": "INV-20931", "expect": ["notes/invoice.txt"], "tag": "exact"},
+    {"q": "exponential backoff", "expect": ["notes/retry.txt"], "tag": "word"},
+    {"q": "retry the call again", "expect": ["notes/retry.txt"], "tag": "meaning"},
+    {"q": "may I keep pets in the apartment", "expect": ["notes/lease.txt"], "tag": "meaning"},
+    {"q": "quantum blockchain yoga", "expect": [], "tag": "negative"}
+  ]
+}

@@ -1,0 +1,3 @@
+Retry a failed call with exponential backoff and random jitter.
+
+The client should retry the call again after a short wait, doubling the delay each time.

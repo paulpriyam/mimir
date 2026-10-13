@@ -1,0 +1,45 @@
+[project]
+name = "mimir"
+version = "0.0.1"
+description = "Local multimodal search over your own files: one embedding space + exact words, with evals that decide what stays."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy>=2.1",
+]
+
+[project.scripts]
+mimir = "mimir.cli:main"
+
+[project.optional-dependencies]
+# The real embedder: EmbeddingGemma 2 on MLX (mlx-vlm). Heavy; only needed to index/search for real.
+# Pinned to the same mlx-vlm commit DigUp uses, which matches the float32 reference (parity >= 0.9997).
+embed = [
+    "mlx-vlm @ git+https://github.com/Blaizzy/mlx-vlm@fec3f50379bb2cb0760ef3c8a68ebce9585e4d97",
+    "mlx==0.32.3",
+    "transformers==5.19.0",
+    "huggingface-hub>=1.33",
+    "pillow>=12.3",
+    "miniaudio>=1.71",
+    "opencv-python>=5.0",
+]
+# Speech-to-text for the transcript pipeline (v1).
+stt = ["mlx-whisper>=0.4"]
+# Reranker on the top candidates (v1). llama.cpp server with a rank-pooling GGUF, driven over HTTP.
+rerank = ["httpx>=0.28"]
+# Expose search to Claude/Cursor over MCP (v1).
+mcp = ["mcp>=1.2"]
+dev = ["pytest>=8.3"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mimir"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
