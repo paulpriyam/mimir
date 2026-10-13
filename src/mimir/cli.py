@@ -19,6 +19,7 @@ from pathlib import Path
 from .config import INDEX_DIR, MAIN_DB, QUERY_PROMPT
 from .embed import FakeEmbedder, WorkerEmbedder
 from .evals import evaluate, format_report
+from .deep import deep_search
 from .indexer import index_folder
 from .search import Searcher
 from .store import Store
@@ -34,6 +35,19 @@ def make_embedder(args, text_only: bool = True):
     if args.fake:
         return FakeEmbedder()
     return WorkerEmbedder(text_only=text_only)
+
+
+def open_reranker():
+    """The cross-encoder, or None when the runtime has not been fetched."""
+    from .rerank import Reranker, RerankerUnavailable, available
+
+    if not available():
+        return None
+    try:
+        return Reranker()
+    except RerankerUnavailable as error:
+        print(f"reranker unavailable: {error}")
+        return None
 
 
 def cmd_index(args) -> int:
@@ -71,7 +85,20 @@ def cmd_search(args) -> int:
         vector = embedder.embed_text([args.query], QUERY_PROMPT)[0]
     finally:
         embedder.close()
-    hits = Searcher(store).search(args.query, query_vector=vector, limit=args.limit)
+    searcher = Searcher(store)
+    if args.deep:
+        reranker = open_reranker()
+        if reranker is None:
+            print("deep search needs the reranker runtime; run scripts/fetch_reranker.py")
+            store.close()
+            return 1
+        try:
+            hits = deep_search(store, searcher, reranker, args.query, query_vector=vector,
+                               limit=args.limit)
+        finally:
+            reranker.close()
+    else:
+        hits = searcher.search(args.query, query_vector=vector, limit=args.limit)
     if not hits:
         print("nothing found")
     for hit in hits:
@@ -88,10 +115,13 @@ def cmd_search(args) -> int:
 def cmd_eval(args) -> int:
     store = open_store(args)
     embedder = make_embedder(args, text_only=True)
+    reranker = open_reranker() if args.deep else None
     try:
-        report = evaluate(store, embedder, args.eval_file, depth=args.depth)
+        report = evaluate(store, embedder, args.eval_file, depth=args.depth, reranker=reranker)
     finally:
         embedder.close()
+        if reranker is not None:
+            reranker.close()
     print(format_report(report, depth=args.depth))
     store.close()
     return 0
@@ -134,11 +164,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("search", help="search the index")
     p.add_argument("query")
     p.add_argument("-n", "--limit", type=int, default=10)
+    p.add_argument("--deep", action="store_true",
+                   help="loose gate + reranker: slower, finds more, rejects more")
     p.set_defaults(func=cmd_search)
 
     p = sub.add_parser("eval", help="run an eval file and print the score table")
     p.add_argument("eval_file")
     p.add_argument("-n", "--depth", type=int, default=10)
+    p.add_argument("--deep", action="store_true", help="score the deep (reranked) path instead")
     p.set_defaults(func=cmd_eval)
 
     p = sub.add_parser("info", help="what the index holds")

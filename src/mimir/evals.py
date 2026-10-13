@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import COS_FLOOR, WORD_WEIGHT, Z_GATE
+from .deep import deep_search
 from .search import Searcher
 
 
@@ -137,7 +138,7 @@ def _matches(hit, base: Path, target: str) -> bool:
 
 def evaluate(store, embedder, eval_path: str | Path, depth: int = 10,
              z_gate: float = Z_GATE, word_weight: float = WORD_WEIGHT,
-             cos_floor: float = COS_FLOOR) -> Report:
+             cos_floor: float = COS_FLOOR, reranker=None) -> Report:
     base, queries = load_eval(eval_path)
     searcher = Searcher(store)
     report = Report()
@@ -146,8 +147,12 @@ def evaluate(store, embedder, eval_path: str | Path, depth: int = 10,
         started = time.perf_counter()
         vector = embedder.embed_text([query.q])[0] if query.expect is not None else None
         kinds = {query.kind} if query.kind else None
-        hits = searcher.search(query.q, query_vector=vector, kinds=kinds, limit=depth,
-                               z_gate=z_gate, word_weight=word_weight, cos_floor=cos_floor)
+        if reranker is not None:
+            hits = deep_search(store, searcher, reranker, query.q, query_vector=vector,
+                               limit=depth, kinds=kinds)
+        else:
+            hits = searcher.search(query.q, query_vector=vector, kinds=kinds, limit=depth,
+                                   z_gate=z_gate, word_weight=word_weight, cos_floor=cos_floor)
         report.latencies.append(time.perf_counter() - started)
 
         negative = not query.expect

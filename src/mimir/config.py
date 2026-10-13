@@ -41,6 +41,43 @@ CAPTION_PROMPT = ("Describe this image in one short factual sentence. "
 CAPTION_MAX_TOKENS = 64
 CAPTION = os.environ.get("MIMIR_CAPTION", "1") != "0"
 
+# --- Reranking (the "deep" search mode) ------------------------------------------------
+# Instant search compares vectors: one dot product per document, 8 ms, but it cannot tell a
+# real paraphrase from an absurd query when both land in the same 0.66-0.68 cosine band. The
+# deep mode loosens the gate to pull in every plausible candidate, then reranks them with a
+# cross-encoder that reads the query and the document together.
+#
+# Measured on the testbed with a real paraphrase and an absurd query, the reranker separated
+# them by 100x (0.0104 vs 0.0001) where cosine could not separate them at all.
+#
+# Runtime: a prebuilt llama.cpp (scripts/fetch_reranker.py) and ggml-org's GGUF conversion of
+# Qwen3-Reranker-0.6B, Apache-2.0. Scores are tiny probabilities, so the threshold is about
+# the ratio, not the absolute value; it is calibrated against the eval, not guessed.
+MIMIR_HOME = Path(os.environ.get("MIMIR_HOME", Path.home() / ".mimir")).expanduser()
+LLAMA_SERVER = Path(os.environ.get("MIMIR_LLAMA_SERVER", MIMIR_HOME / "tools" / "llama" / "llama-server"))
+RERANK_MODEL = Path(os.environ.get("MIMIR_RERANK_MODEL",
+                                   MIMIR_HOME / "models" / "qwen3-reranker-0.6b-q8_0.gguf"))
+RERANK_PORT = int(os.environ.get("MIMIR_RERANK_PORT", "8099"))
+RERANK_TOP = 25           # candidates handed to the reranker; prefill is the cost
+DEEP_COS_FLOOR = 0.60     # loose gate: at this floor no paraphrase in the eval comes back empty
+RERANK_MIN_SCORE = 0.001  # below this the reranker is saying "nothing here", so return nothing
+
+# Measured, and the deep mode does NOT yet beat instant search. On evals/media.json:
+#
+#   instant (cos_floor 0.68)   ALL R@1 0.86  R@5 0.90  empty 6   negatives 0/8
+#   deep, no score threshold   ALL R@1 0.88  R@5 0.97  empty 2   negatives 6/8
+#   deep, threshold 0.001      ALL R@1 0.80  R@5 0.87  empty 9   negatives 0/8
+#
+# Read that as: the cross-encoder is good at RANKING (it finds what retrieval missed - 2 empty
+# against 6) but poor at REJECTING on this corpus, where six of eight negatives score as
+# plausibly as a real match. Any threshold high enough to reject them also throws away real
+# answers. So "deep" trades the honest-nothing promise for recall, and neither setting wins on
+# both axes. It stays opt-in and unproven until video frames carry text (they have none, which
+# is why video-moment drops from 0.86 to 0.29) and rejection is solved properly.
+#
+# scripts/sweep_rerank.py re-derives the threshold in one pass; scripts/sweep_gate.py does the
+# same for the cosine floor.
+
 # --- Retrieval -----------------------------------------------------------------------
 # How far the best segment must stand out (in per-query standard deviations) to count as a
 # meaning match. Also what makes "nothing found" honest. DigUp's default, kept.
