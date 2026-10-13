@@ -22,6 +22,16 @@ embed = [
     "miniaudio>=1.71",
     "opencv-python>=5.0",
 ]
+# Reading media: images, audio windows, video frames, page text and OCR.
+# All pip-installable on arm64; no Homebrew and no system ffmpeg.
+#   av            libav bindings with bundled ffmpeg libs (decode audio/video)
+#   pyobjc-*      Apple Vision (OCR) and PDFKit (page text), system frameworks
+media = [
+    "av>=14",
+    "pyobjc-framework-Vision>=11",
+    "pyobjc-framework-Quartz>=11",
+    "pillow>=12.3",
+]
 # Speech-to-text for the transcript pipeline (v1).
 stt = ["mlx-whisper>=0.4"]
 # Reranker on the top candidates (v1). llama.cpp server with a rank-pooling GGUF, driven over HTTP.

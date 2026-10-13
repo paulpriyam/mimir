@@ -4,8 +4,10 @@
 without downloading a model. Use it for wiring and CI, never for quality.
 
     mimir index  --fake ~/notes
-    mimir search --fake "retry with backoff"
-    mimir eval   --fake evals/smoke.json
+    mimir index  ~/mimir-testbed
+    mimir search "a penguin"
+    mimir search "where they talk about the flight delay"
+    mimir eval   evals/media.json
 """
 
 from __future__ import annotations
@@ -14,27 +16,12 @@ import argparse
 import sys
 from pathlib import Path
 
-from .config import DOC_PROMPT, INDEX_DIR, MAIN_DB, QUERY_PROMPT, RERANK_TOP
+from .config import INDEX_DIR, MAIN_DB, QUERY_PROMPT
 from .embed import FakeEmbedder, WorkerEmbedder
 from .evals import evaluate, format_report
+from .indexer import index_folder
 from .search import Searcher
-from .store import Store, content_hash, vec_blob
-from .vectors import normalize
-
-TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".rst"}
-CHUNK = 800
-OVERLAP = 100
-
-
-def chunks(text: str, size: int = CHUNK, overlap: int = OVERLAP):
-    text = text.strip()
-    if not text:
-        return
-    step = max(size - overlap, 1)
-    for start in range(0, len(text), step):
-        piece = text[start:start + size].strip()
-        if piece:
-            yield start, piece
+from .store import Store
 
 
 def open_store(args) -> Store:
@@ -43,44 +30,29 @@ def open_store(args) -> Store:
     return Store(directory / MAIN_DB)
 
 
-def make_embedder(args):
-    return FakeEmbedder() if args.fake else WorkerEmbedder(text_only=True)
+def make_embedder(args, text_only: bool = True):
+    if args.fake:
+        return FakeEmbedder()
+    return WorkerEmbedder(text_only=text_only)
 
 
 def cmd_index(args) -> int:
     root = Path(args.path).expanduser().resolve()
-    store, embedder = open_store(args), make_embedder(args)
-    added = skipped = 0
+    store = open_store(args)
+    embedder = make_embedder(args, text_only=False)  # images and audio need the full model
     try:
-        for path in sorted(root.rglob("*")):
-            if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
-                continue
-            text = path.read_text(errors="ignore")
-            stat = path.stat()
-            file_id = store.add_file(str(path), "doc", stat.st_size, stat.st_mtime,
-                                     content_hash(path.read_bytes()))
-            store.add_segment(file_id, "name", "text", text=path.name)
-            pieces = list(chunks(text))
-            if pieces:
-                vectors = normalize(embedder.embed_text([p for _, p in pieces], DOC_PROMPT))
-                for (offset, piece), vector in zip(pieces, vectors):
-                    store.add_segment(file_id, "chunk", "text", loc=float(offset), vec=vec_blob(vector),
-                                      excerpt=piece[:200], text=piece, model_id=embedder.info.get("model"),
-                                      dim=embedder.dim)
-            store.commit()
-            added += 1
-        store.set_meta("model", str(embedder.info.get("model")))
-        store.set_meta("dim", str(embedder.dim))
+        files, skipped = index_folder(store, embedder, root)
     finally:
         embedder.close()
-    files, segments = store.count()
-    print(f"indexed {added} files ({skipped} skipped); index now holds {files} files, {segments} segments")
+    total_files, segments = store.count()
+    print(f"indexed {files} files ({skipped} skipped); index now holds {total_files} files, {segments} segments")
     store.close()
     return 0
 
 
 def cmd_search(args) -> int:
-    store, embedder = open_store(args), make_embedder(args)
+    store = open_store(args)
+    embedder = make_embedder(args, text_only=True)  # a query is text
     try:
         vector = embedder.embed_text([args.query], QUERY_PROMPT)[0]
     finally:
@@ -92,15 +64,16 @@ def cmd_search(args) -> int:
         where = ""
         if hit.loc is not None:
             where = f" @{hit.loc:.0f}" + (f"-{hit.loc_end:.0f}" if hit.loc_end else "")
-        print(f"{hit.score:5.2f}  {hit.kind:<10} {Path(hit.path).name}{where}")
+        print(f"{hit.score:5.2f}  {hit.kind:<9} {Path(hit.path).name}{where}")
         if hit.excerpt:
-            print(f"        {hit.excerpt.strip()[:160]}")
+            print(f"        {hit.excerpt.strip()[:150]}")
     store.close()
     return 0
 
 
 def cmd_eval(args) -> int:
-    store, embedder = open_store(args), make_embedder(args)
+    store = open_store(args)
+    embedder = make_embedder(args, text_only=True)
     try:
         report = evaluate(store, embedder, args.eval_file, depth=args.depth)
     finally:
@@ -113,10 +86,15 @@ def cmd_eval(args) -> int:
 def cmd_info(args) -> int:
     store = open_store(args)
     files, segments = store.count()
-    print(f"index:  {store.path}")
-    print(f"files:  {files}")
+    print(f"index:    {store.path}")
+    print(f"files:    {files}")
     print(f"segments: {segments}")
-    print(f"model:  {store.meta('model', '(none)')}  dim {store.meta('dim', '?')}")
+    print(f"model:    {store.meta('model', '(none)')}  dim {store.meta('dim', '?')}")
+    rows = store.db.execute(
+        "SELECT modality, kind, COUNT(*) AS n FROM segments GROUP BY modality, kind ORDER BY n DESC"
+    ).fetchall()
+    for row in rows:
+        print(f"  {row['modality']:<6} {row['kind']:<8} {row['n']}")
     store.close()
     return 0
 
@@ -127,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fake", action="store_true", help="use the hash-based stand-in embedder")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("index", help="index a folder (text files for now)")
+    p = sub.add_parser("index", help="index a folder")
     p.add_argument("path")
     p.set_defaults(func=cmd_index)
 

@@ -24,6 +24,13 @@ MAIN_DB = "index.sqlite"
 # How far the best segment must stand out (in per-query standard deviations) to count as a
 # meaning match. Also what makes "nothing found" honest. DigUp's default, kept.
 Z_GATE = 2.0
+# Centring every score on the query's own scale (Z_GATE) throws away the absolute level, and
+# that level is the only thing that says "nothing here resembles this query at all". On the
+# media eval the gate alone let both negatives through (cos 0.645, 0.669) while every true
+# positive scored cos >= 0.696. So a meaning match must clear both: stand out, and be close
+# enough in absolute terms. Provisional: two negatives is thin evidence, and the floor is
+# model- and modality-dependent. The evals are what tune it.
+COS_FLOOR = 0.68
 # How much finding the query's words counts against meaning (Searcher.wordWeight in DigUp).
 WORD_WEIGHT = 2.0
 # Share of a query's words that must be present for a file to qualify on words alone.

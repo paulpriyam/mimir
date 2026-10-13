@@ -1,0 +1,26 @@
+{
+  "base": "~/mimir-testbed",
+  "queries": [
+    {"q": "a penguin", "expect": ["img/Animals-Penguin.jpg"], "tag": "image"},
+    {"q": "a zebra", "expect": ["img/Animals-Zebra.jpg"], "tag": "image"},
+    {"q": "a violin", "expect": ["img/Instruments-Violin.jpg"], "tag": "image"},
+    {"q": "a sunflower", "expect": ["img/Flowers-Sunflower.jpg"], "tag": "image"},
+    {"q": "an owl", "expect": ["img/Animals-Owl.jpg"], "tag": "image"},
+    {"q": "a drum kit", "expect": ["img/Instruments-Drum.jpg"], "tag": "image"},
+
+    {"q": "INV-20931", "expect": ["screenshots/shot_invoice.png"], "tag": "shot-exact"},
+    {"q": "payment declined by the bank", "expect": ["screenshots/shot_invoice.png"], "tag": "shot-word"},
+    {"q": "team standup notes", "expect": ["screenshots/shot_meeting.png"], "tag": "shot-word"},
+
+    {"q": "buying groceries on the way home", "expect": ["audio/speech_groceries.wav"], "tag": "audio"},
+    {"q": "a flight delayed by a storm", "expect": ["audio/speech_flight_delay.wav"], "tag": "audio"},
+    {"q": "baking a chocolate cake", "expect": ["audio/speech_cake_recipe.wav"], "tag": "audio"},
+    {"q": "quarterly revenue grew in Europe", "expect": ["audio/speech_revenue.wav"], "tag": "audio"},
+
+    {"q": "may I keep pets in the apartment", "expect": ["pdf/lease.pdf"], "tag": "pdf-page"},
+    {"q": "fire drill procedure", "expect": ["pdf/handbook.pdf@6-6"], "tag": "pdf-page"},
+
+    {"q": "quantum blockchain yoga", "expect": [], "tag": "negative"},
+    {"q": "a helicopter landing on the moon", "expect": [], "tag": "negative"}
+  ]
+}

@@ -22,14 +22,14 @@ p50/p95 latency. Peak RSS and index size are printed too, so cost is never a sur
 from __future__ import annotations
 
 import json
+import os
 import resource
-import statistics
 import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import Z_GATE, WORD_WEIGHT
+from .config import COS_FLOOR, WORD_WEIGHT, Z_GATE
 from .search import Searcher
 
 
@@ -90,9 +90,15 @@ def load_eval(path: str | Path) -> tuple[Path, list[EvalQuery]]:
     path = Path(path)
     data = json.loads(path.read_text())
     base = data.get("base", ".")
+    # MIMIR_TESTBED stands in for ~/mimir-testbed, so an eval file stays portable.
+    testbed = os.environ.get("MIMIR_TESTBED")
+    if testbed and base.startswith("~/mimir-testbed"):
+        base = testbed + base[len("~/mimir-testbed"):]
     base_path = Path(base).expanduser()
     if not base_path.is_absolute():
         base_path = (path.parent / base_path).resolve()
+    else:
+        base_path = base_path.resolve()   # /var -> /private/var, so paths compare equal
     queries = [
         EvalQuery(q=item["q"], expect=item.get("expect", []), tag=item.get("tag", "all"), kind=item.get("kind"))
         for item in data["queries"]
@@ -102,7 +108,7 @@ def load_eval(path: str | Path) -> tuple[Path, list[EvalQuery]]:
 
 def _matches(hit, base: Path, target: str) -> bool:
     parts = target.split("@", 1)
-    if hit.path != str(base / parts[0]):
+    if Path(hit.path).resolve() != (base / parts[0]).resolve():
         return False
     if len(parts) == 1:
         return True
@@ -114,7 +120,8 @@ def _matches(hit, base: Path, target: str) -> bool:
 
 
 def evaluate(store, embedder, eval_path: str | Path, depth: int = 10,
-             z_gate: float = Z_GATE, word_weight: float = WORD_WEIGHT) -> Report:
+             z_gate: float = Z_GATE, word_weight: float = WORD_WEIGHT,
+             cos_floor: float = COS_FLOOR) -> Report:
     base, queries = load_eval(eval_path)
     searcher = Searcher(store)
     report = Report()
@@ -124,7 +131,7 @@ def evaluate(store, embedder, eval_path: str | Path, depth: int = 10,
         vector = embedder.embed_text([query.q])[0] if query.expect is not None else None
         kinds = {query.kind} if query.kind else None
         hits = searcher.search(query.q, query_vector=vector, kinds=kinds, limit=depth,
-                               z_gate=z_gate, word_weight=word_weight)
+                               z_gate=z_gate, word_weight=word_weight, cos_floor=cos_floor)
         report.latencies.append(time.perf_counter() - started)
 
         negative = not query.expect
@@ -135,7 +142,11 @@ def evaluate(store, embedder, eval_path: str | Path, depth: int = 10,
                          if any(_matches(hit, base, target) for target in query.expect)), None)
 
         top = Path(hits[0].path).name if hits else "-"
-        report.per_query.append((query.tag, query.q, rank, top))
+        # z and cosine of the top hit: what the gate saw, so a false positive is diagnosable.
+        detail = ""
+        if hits and hits[0].z is not None:
+            detail = f" (z {hits[0].z:.1f}, cos {hits[0].cosine:.3f})"
+        report.per_query.append((query.tag, query.q, rank, top + detail))
         for key in {query.tag, "ALL"}:
             report.rows.setdefault(key, TagRow()).add(rank, negative)
 

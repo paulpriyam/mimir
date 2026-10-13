@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .config import COVERAGE_GATE, WORD_WEIGHT, Z_GATE
+from .config import COVERAGE_GATE, COS_FLOOR, WORD_WEIGHT, Z_GATE
 from .store import Store
 from .vectors import cosine_scores, meaning
 
@@ -102,7 +102,8 @@ class Searcher:
         self.vectors_loaded = False
 
     def search(self, text: str, query_vector: np.ndarray | None = None, kinds: set[str] | None = None,
-               limit: int = 20, z_gate: float = Z_GATE, word_weight: float = WORD_WEIGHT) -> list[Hit]:
+               limit: int = 20, z_gate: float = Z_GATE, word_weight: float = WORD_WEIGHT,
+               cos_floor: float = COS_FLOOR) -> list[Hit]:
         if query_vector is not None and not self.vectors_loaded:
             self.reload()
         words = terms(text)
@@ -152,7 +153,9 @@ class Searcher:
         lookup = is_lookup(words)
         meaning_weight, words_weight = (0.5, word_weight * 2) if lookup else (1.0, word_weight)
         hinted = kind_hints(text)
-        candidates = {f for f, (z, _, _) in best.items() if z >= z_gate}
+        # A meaning match must stand out on the query's scale AND be close in absolute terms:
+        # without the second condition a query nothing resembles still has a "standout".
+        candidates = {f for f, (z, cos, _) in best.items() if z >= z_gate and cos >= cos_floor}
         candidates |= {f for f, share in coverage.items() if share >= COVERAGE_GATE}
 
         scored: dict[int, float] = {}
@@ -170,7 +173,8 @@ class Searcher:
             ).fetchone()
             semantic = best.get(file_id)
             kw = keyword.get(file_id)
-            use_meaning = semantic is not None and (semantic[0] >= z_gate or kw is None)
+            strong_meaning = semantic is not None and semantic[0] >= z_gate and semantic[1] >= cos_floor
+            use_meaning = strong_meaning or (semantic is not None and kw is None)
             segment_id = int(self.row_segment[semantic[2]]) if use_meaning else (kw[0] if kw else None)
             if segment_id is None:
                 continue
