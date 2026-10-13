@@ -81,11 +81,13 @@ class Segment:
 
 
 class Store:
-    """One SQLite connection, used from one thread."""
+    """One SQLite connection. Not thread-safe: callers that use it from several threads (the
+    MCP server runs tools on a worker thread) must serialize access themselves. The connection
+    is opened with check_same_thread=False so that is possible rather than an error."""
 
     def __init__(self, path: str | Path):
         self.path = str(path)
-        self.db = sqlite3.connect(self.path)
+        self.db = sqlite3.connect(self.path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode = WAL")
         self.db.execute("PRAGMA synchronous = NORMAL")

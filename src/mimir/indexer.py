@@ -111,4 +111,5 @@ def index_folder(store: Store, embedder, root: Path, skip_hidden: bool = True) -
             print(f"  ! {path.name}: {type(error).__name__}: {error}")
     store.set_meta("model", str(embedder.info.get("model")))
     store.set_meta("dim", str(embedder.dim))
+    store.set_meta("root", str(root))
     return files, skipped

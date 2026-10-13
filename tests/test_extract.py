@@ -17,7 +17,7 @@ def test_kind_of_covers_every_supported_family():
     assert kind_of(Path("a.m4a")) == "audio"
     assert kind_of(Path("a.mov")) == "video"
     assert kind_of(Path("a.pdf")) == "pdf"
-    assert kind_of(Path("a.md")) == "text"
+    assert kind_of(Path("a.md")) == "doc"
     assert kind_of(Path("a.docx")) is None
 
 

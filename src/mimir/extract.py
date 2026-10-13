@@ -57,7 +57,7 @@ def kind_of(path: Path) -> str | None:
     if suffix == ".pdf":
         return "pdf"
     if suffix in TEXT_SUFFIXES:
-        return "text"
+        return "doc"
     return None
 
 
@@ -225,6 +225,6 @@ def extract(path: Path, kind: str, workdir: Path) -> list[Item]:
         return video_items(path, workdir) + transcripts(path)
     if kind == "pdf":
         return pdf_items(path)
-    if kind == "text":
+    if kind == "doc":
         return text_items(path)
     return []

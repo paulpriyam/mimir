@@ -99,6 +99,12 @@ def cmd_info(args) -> int:
     return 0
 
 
+def cmd_mcp(args) -> int:
+    from .mcp_server import serve
+
+    return serve(args.index_dir)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mimir", description=__doc__.splitlines()[0])
     parser.add_argument("--index-dir", default=str(INDEX_DIR), help="where the SQLite index lives")
@@ -121,6 +127,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("info", help="what the index holds")
     p.set_defaults(func=cmd_info)
+
+    p = sub.add_parser("mcp", help="serve the index to MCP clients (Claude, Cursor) over stdio")
+    p.set_defaults(func=cmd_mcp)
     return parser
 
 
