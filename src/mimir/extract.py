@@ -134,21 +134,16 @@ def audio_items(path: Path, workdir: Path) -> list[Item]:
     return items
 
 
-def video_items(path: Path, workdir: Path) -> list[Item]:
-    """A frame every few seconds, plus the soundtrack as audio windows."""
+def video_frames(path: Path, workdir: Path) -> list[Item]:
+    """A frame every few seconds, each written out so it can be embedded and captioned alone."""
     import av
     from PIL import Image
-
-    items: list[Item] = []
-    try:
-        items += audio_items(path, workdir)
-    except Exception:
-        pass                          # a silent clip is normal
 
     container = av.open(str(path))
     stream = next((s for s in container.streams if s.type == "video"), None)
     if stream is None:
-        return items
+        return []
+    items: list[Item] = []
     next_target = 0.0
     for frame in container.decode(stream):
         seconds = float(frame.time or 0.0)
@@ -161,6 +156,19 @@ def video_items(path: Path, workdir: Path) -> list[Item]:
                           media=str(out), media_kind="image"))
         next_target = seconds + VIDEO_EVERY
     return items
+
+
+def video_audio(path: Path, workdir: Path) -> list[Item]:
+    """The soundtrack as overlapping audio windows. A silent clip yields []."""
+    try:
+        return audio_items(path, workdir)
+    except Exception:
+        return []
+
+
+def video_items(path: Path, workdir: Path) -> list[Item]:
+    """Everything a video contributes: frames plus its soundtrack."""
+    return video_frames(path, workdir) + video_audio(path, workdir)
 
 
 # --- Documents ----------------------------------------------------------------------

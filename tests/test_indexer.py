@@ -8,9 +8,52 @@ three phases with no file dependencies at all.
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from mimir.indexer import index_folder
 from mimir.store import Store
+
+
+def test_video_frames_are_captioned(tmp_path):
+    """A frame must carry text, or it can be neither keyword-matched nor reranked."""
+    av = pytest.importorskip("av")
+    from mimir.embed import FakeEmbedder
+
+    video = tmp_path / "clip.mp4"
+    container = av.open(str(video), mode="w")
+    stream = container.add_stream("libx264", rate=8)
+    stream.width = stream.height = 64
+    stream.pix_fmt = "yuv420p"
+    picture = np.zeros((64, 64, 3), np.uint8)
+    picture[:, :] = (200, 30, 30)
+    for _ in range(4 * 8):
+        for packet in stream.encode(av.VideoFrame.from_ndarray(picture, format="rgb24")):
+            container.mux(packet)
+    for packet in stream.encode():
+        container.mux(packet)
+    container.close()
+
+    class StubCaptioner:
+        info = {"model": "stub"}
+
+        def caption(self, path):
+            return "a red square"
+
+        def close(self):
+            pass
+
+    store = Store(tmp_path / "index.sqlite")
+    files, _ = index_folder(store, tmp_path, lambda: FakeEmbedder(), lambda: None,
+                            lambda: StubCaptioner())
+    frames = store.db.execute("SELECT loc FROM segments WHERE kind = 'frame'").fetchall()
+    captions = store.db.execute("SELECT loc, excerpt FROM segments WHERE kind = 'caption'").fetchall()
+    store.close()
+
+    assert files == 1
+    assert frames, "the video produced no frames"
+    assert len(captions) == len(frames), "every frame should carry a caption"
+    assert {row["loc"] for row in captions} == {row["loc"] for row in frames}
+    assert all("red square" in row["excerpt"] for row in captions)
 
 
 def test_models_are_loaded_one_phase_at_a_time(tmp_path):
