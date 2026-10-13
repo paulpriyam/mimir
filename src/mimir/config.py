@@ -27,6 +27,20 @@ MAIN_DB = "index.sqlite"
 WHISPER_MODEL = os.environ.get("MIMIR_WHISPER", "mlx-community/whisper-large-v3-turbo")
 TRANSCRIBE = os.environ.get("MIMIR_TRANSCRIBE", "1") != "0"
 
+# --- Captions -------------------------------------------------------------------------
+# A small vision-language model writes one short sentence per image. This gives a picture real
+# text: it becomes findable by words it never contained, and it becomes a text candidate the
+# reranker can score at all (a text-only reranker cannot touch a raw image).
+#
+# SmolVLM 2.2B, 4-bit, Apache-2.0. The MLX build of SmolVLM2 proper is not on the Hub, and the
+# Qwen2.5-VL builds carry no license tag, so this is the plan's intent with a clear licence.
+# Swap for a bigger model if captions prove too weak; the eval decides.
+CAPTION_MODEL = os.environ.get("MIMIR_CAPTION_MODEL", "mlx-community/SmolVLM-Instruct-4bit")
+CAPTION_PROMPT = ("Describe this image in one short factual sentence. "
+                  "Name the main subject, and mention colours only if they are distinctive.")
+CAPTION_MAX_TOKENS = 64
+CAPTION = os.environ.get("MIMIR_CAPTION", "1") != "0"
+
 # --- Retrieval -----------------------------------------------------------------------
 # How far the best segment must stand out (in per-query standard deviations) to count as a
 # meaning match. Also what makes "nothing found" honest. DigUp's default, kept.

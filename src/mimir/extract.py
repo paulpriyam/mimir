@@ -191,19 +191,6 @@ def text_items(path: Path) -> list[Item]:
 
 # --- Dispatch -----------------------------------------------------------------------
 
-def transcripts(path: Path) -> list[Item]:
-    """Transcript segments for audio/video, if the stt extra is installed and enabled."""
-    from .transcribe import transcribe_items
-
-    try:
-        return transcribe_items(path)
-    except Exception as error:
-        # A silent clip is normal, not a failure: only real errors are worth reporting.
-        if "no audio stream" not in str(error):
-            print(f"  ! transcript failed for {path.name}: {type(error).__name__}: {error}")
-        return []
-
-
 def to_jpeg(path: Path, workdir: Path) -> Path:
     """The vision tower reads jpeg/png; anything else is converted with sips first."""
     if path.suffix.lower() in {".jpg", ".jpeg", ".png"}:
@@ -214,17 +201,25 @@ def to_jpeg(path: Path, workdir: Path) -> Path:
     return out
 
 
-def extract(path: Path, kind: str, workdir: Path) -> list[Item]:
+def extract(path: Path, kind: str, workdir: Path, transcript: list[Item] | None = None,
+            caption: str | None = None) -> list[Item]:
+    """Everything one file contributes.
+
+    `transcript` (audio/video) and `caption` (images) are produced earlier by their own phases,
+    so that the speech and caption models are never resident alongside the embedder.
+    """
     if kind == "image":
         items = [Item("image", "image", media=str(to_jpeg(path, workdir)), media_kind="image")]
         found = ocr(path).strip()
         if found:
             items.append(Item("ocr", "text", text=found, excerpt=found[:200]))
+        if caption:
+            items.append(Item("caption", "text", text=caption, excerpt=caption[:200]))
         return items
     if kind == "audio":
-        return audio_items(path, workdir) + transcripts(path)
+        return audio_items(path, workdir) + list(transcript or [])
     if kind == "video":
-        return video_items(path, workdir) + transcripts(path)
+        return video_items(path, workdir) + list(transcript or [])
     if kind == "pdf":
         return pdf_items(path)
     if kind == "doc":

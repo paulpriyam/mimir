@@ -39,11 +39,25 @@ def make_embedder(args, text_only: bool = True):
 def cmd_index(args) -> int:
     root = Path(args.path).expanduser().resolve()
     store = open_store(args)
-    embedder = make_embedder(args, text_only=False)  # images and audio need the full model
-    try:
-        files, skipped = index_folder(store, embedder, root)
-    finally:
-        embedder.close()
+
+    def embedder_factory():
+        return FakeEmbedder() if args.fake else WorkerEmbedder(text_only=False)
+
+    def transcriber_factory():
+        if args.fake or args.no_transcribe:
+            return None
+        from .transcribe import Transcriber, available
+
+        return Transcriber() if available() else None
+
+    def captioner_factory():
+        if args.fake or args.no_caption:
+            return None
+        from .caption import Captioner, available
+
+        return Captioner() if available() else None
+
+    files, skipped = index_folder(store, root, embedder_factory, transcriber_factory, captioner_factory)
     total_files, segments = store.count()
     print(f"indexed {files} files ({skipped} skipped); index now holds {total_files} files, {segments} segments")
     store.close()
@@ -113,6 +127,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("index", help="index a folder")
     p.add_argument("path")
+    p.add_argument("--no-transcribe", action="store_true", help="skip the speech phase")
+    p.add_argument("--no-caption", action="store_true", help="skip the image caption phase")
     p.set_defaults(func=cmd_index)
 
     p = sub.add_parser("search", help="search the index")

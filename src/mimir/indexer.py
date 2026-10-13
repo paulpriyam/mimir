@@ -1,8 +1,16 @@
-"""Walk a folder, extract every file, embed the items, write the index.
+"""Walk a folder and index it in phases, one model at a time.
 
-Models are loaded once per run and fed in batches grouped by modality, so a folder of images
-never thrashes the audio tower. Media the worker produces (frames, audio windows) goes to a
-temp dir that is deleted as soon as it has been embedded.
+Indexing used to be per file: extract (which called Whisper) then embed (which called the
+embedder), so the speech model and the embedding model were resident together. Now it runs in
+three passes and each pass owns exactly one model:
+
+    1. speech    Whisper transcribes every audio and video file, then goes away
+    2. captions  SmolVLM describes every image, then goes away
+    3. embed     EmbeddingGemma vectors everything, using the transcript and caption text
+
+Peak memory becomes the largest single model instead of their sum, which is what makes an
+8 GB Mac viable. Each model is a separate process (or, for Whisper, uncached), so "goes away"
+means the memory is actually returned, not just dereferenced.
 """
 
 from __future__ import annotations
@@ -19,6 +27,7 @@ from .vectors import normalize
 
 TEXT_BATCH = 16
 MEDIA_BATCH = {"image": 4, "audio": 2}
+SPEECH_KINDS = {"audio", "video"}
 
 
 def file_info(path: Path, kind: str, items: list[Item]) -> dict:
@@ -64,10 +73,11 @@ def embed_items(embedder, items: list[Item]) -> dict[int, np.ndarray]:
     return vectors
 
 
-def index_file(store: Store, embedder, path: Path, kind: str) -> int:
+def index_file(store: Store, embedder, path: Path, kind: str,
+               transcript: list[Item] | None = None, caption: str | None = None) -> int:
     """Index one file. Returns the number of segments written."""
     with tempfile.TemporaryDirectory(prefix="mimir-") as temp:
-        items = extract(path, kind, Path(temp))
+        items = extract(path, kind, Path(temp), transcript=transcript, caption=caption)
         if not items:
             return 0
         vectors = embed_items(embedder, items)
@@ -91,25 +101,72 @@ def index_file(store: Store, embedder, path: Path, kind: str) -> int:
         return written
 
 
-def index_folder(store: Store, embedder, root: Path, skip_hidden: bool = True) -> tuple[int, int]:
-    files = skipped = 0
+def discover(root: Path, skip_hidden: bool = True) -> list[tuple[Path, str]]:
+    found = []
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
         if skip_hidden and any(part.startswith(".") for part in path.relative_to(root).parts):
-            skipped += 1
             continue
         kind = kind_of(path)
-        if kind is None:
-            skipped += 1
-            continue
+        if kind:
+            found.append((path, kind))
+    return found
+
+
+def index_folder(store: Store, root: Path, embedder_factory, transcriber_factory=None,
+                 captioner_factory=None, skip_hidden: bool = True) -> tuple[int, int]:
+    """Phase 1 speech, phase 2 captions, phase 3 embeddings. Each factory returns a model with
+    `.close()`, or None when that model is unavailable or switched off."""
+    targets = discover(root, skip_hidden)
+    files = skipped = 0
+
+    # Phase 1: speech, with only Whisper loaded.
+    transcripts: dict[Path, list[Item]] = {}
+    transcriber = transcriber_factory() if transcriber_factory else None
+    if transcriber:
+        speech = [(path, kind) for path, kind in targets if kind in SPEECH_KINDS]
+        print(f"phase 1/3: transcribing {len(speech)} audio/video files", flush=True)
         try:
-            index_file(store, embedder, path, kind)
-            files += 1
-        except Exception as error:
-            skipped += 1
-            print(f"  ! {path.name}: {type(error).__name__}: {error}")
-    store.set_meta("model", str(embedder.info.get("model")))
-    store.set_meta("dim", str(embedder.dim))
+            for path, _ in speech:
+                try:
+                    transcripts[path] = transcriber.transcribe(path)
+                except Exception as error:
+                    print(f"  ! transcript failed for {path.name}: {type(error).__name__}: {error}")
+        finally:
+            transcriber.close()
+
+    # Phase 2: captions, with only the vision-language model loaded.
+    captions: dict[Path, str] = {}
+    captioner = captioner_factory() if captioner_factory else None
+    if captioner:
+        pictures = [path for path, kind in targets if kind == "image"]
+        print(f"phase 2/3: captioning {len(pictures)} images", flush=True)
+        try:
+            for path in pictures:
+                try:
+                    captions[path] = captioner.caption(path)
+                except Exception as error:
+                    print(f"  ! caption failed for {path.name}: {type(error).__name__}: {error}")
+        finally:
+            captioner.close()
+
+    # Phase 3: embeddings, with only the embedder loaded.
+    print(f"phase 3/3: embedding {len(targets)} files", flush=True)
+    embedder = embedder_factory()
+    try:
+        for path, kind in targets:
+            try:
+                index_file(store, embedder, path, kind,
+                           transcript=transcripts.get(path), caption=captions.get(path))
+                files += 1
+            except Exception as error:
+                skipped += 1
+                print(f"  ! {path.name}: {type(error).__name__}: {error}")
+        store.set_meta("model", str(embedder.info.get("model")))
+        store.set_meta("dim", str(embedder.dim))
+    finally:
+        embedder.close()
+
     store.set_meta("root", str(root))
     return files, skipped
