@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from mimir.extract import audio_items, extract, kind_of, pdf_items, text_items
+from mimir.extract import audio_items, extract, kind_of, pdf_items, text_items, video_items
 
 
 def test_kind_of_covers_every_supported_family():
@@ -67,6 +67,33 @@ def test_ocr_reads_text_from_a_screenshot():
     text = " ".join(item.text or "" for item in items)
     assert "INV-20931" in text
     assert any(item.kind == "image" for item in items)      # the picture itself is still indexed
+
+
+def test_video_frames_are_placed_at_their_moment():
+    av = pytest.importorskip("av")
+    path = Path("/tmp/mimir-test-video.mp4")
+
+    container = av.open(str(path), mode="w")
+    stream = container.add_stream("libx264", rate=8)
+    stream.width = stream.height = 64
+    stream.pix_fmt = "yuv420p"
+    for colour in [(255, 0, 0), (0, 0, 255)]:      # red 0-4 s, blue 4-8 s
+        frame = np.zeros((64, 64, 3), np.uint8)
+        frame[:, :] = colour
+        for _ in range(4 * 8):
+            for packet in stream.encode(av.VideoFrame.from_ndarray(frame, format="rgb24")):
+                container.mux(packet)
+    for packet in stream.encode():
+        container.mux(packet)
+    container.close()
+
+    items = video_items(path, Path("/tmp"))
+    path.unlink()
+    assert items, "a video with no audio track must still yield frames"
+    assert all(item.modality == "image" and item.media_kind == "image" for item in items)
+    assert [item.loc for item in items] == [0.0, 4.0]   # one frame every VIDEO_EVERY seconds
+    for item in items:
+        Path(item.media).unlink()
 
 
 def test_pdf_pages_are_numbered():

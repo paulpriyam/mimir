@@ -50,17 +50,28 @@ class TagRow:
     mrr: float = 0.0
     negatives: int = 0
     false_positives: int = 0
+    # A miss is two different failures: the answer was not returned at all (the gate rejected
+    # it, or retrieval never found it), or the wrong thing was returned ahead of it (a ranking
+    # problem). They need different fixes, so they are counted apart.
+    empty_misses: int = 0
+    wrong_misses: int = 0
 
     @property
     def positives(self) -> int:
         return self.n - self.negatives
 
-    def add(self, rank: int | None, negative: bool) -> None:
+    def add(self, rank: int | None, negative: bool, returned_any: bool = False) -> None:
         self.n += 1
         if negative:
             self.negatives += 1
-            if rank is not None:
+            if returned_any:
                 self.false_positives += 1
+            return
+        if rank is None:
+            if returned_any:
+                self.wrong_misses += 1
+            else:
+                self.empty_misses += 1
             return
         if rank is None:
             return
@@ -148,7 +159,7 @@ def evaluate(store, embedder, eval_path: str | Path, depth: int = 10,
             detail = f" (z {hits[0].z:.1f}, cos {hits[0].cosine:.3f})"
         report.per_query.append((query.tag, query.q, rank, top + detail))
         for key in {query.tag, "ALL"}:
-            report.rows.setdefault(key, TagRow()).add(rank, negative)
+            report.rows.setdefault(key, TagRow()).add(rank, negative, returned_any=bool(hits))
 
     return report
 
@@ -164,7 +175,8 @@ def format_report(report: Report, depth: int = 10) -> str:
         where = f"#{rank}" if rank else "miss"
         lines.append(f"{where:>4}  {tag:<12} \"{q}\"  top: {top}")
     lines.append("")
-    lines.append(f"{'tag':<12} {'n':>3}  {'R@1':>5} {'R@5':>5} {f'R@{depth}':>5} {'MRR':>5}  {'neg':>4} {'FP':>4}")
+    lines.append(f"{'tag':<12} {'n':>3}  {'R@1':>5} {'R@5':>5} {f'R@{depth}':>5} {'MRR':>5}  "
+                 f"{'neg':>3} {'FP':>4}  {'empty':>5} {'wrong':>5}")
     for tag in sorted(report.rows, key=lambda k: (k != "ALL", k)):
         row = report.rows[tag]
         fpr = f"{row.false_positives}/{row.negatives}" if row.negatives else "-"
@@ -173,7 +185,8 @@ def format_report(report: Report, depth: int = 10) -> str:
             rates = f"{row.at1 / n:>5.2f} {row.at5 / n:>5.2f} {row.at10 / n:>5.2f} {row.mrr / n:>5.2f}"
         else:
             rates = f"{'-':>5} {'-':>5} {'-':>5} {'-':>5}"
-        lines.append(f"{tag:<12} {row.n:>3}  {rates}  {row.negatives:>4} {fpr:>4}")
+        lines.append(f"{tag:<12} {row.n:>3}  {rates}  {row.negatives:>3} {fpr:>4}  "
+                     f"{row.empty_misses:>5} {row.wrong_misses:>5}")
     if report.latencies:
         lines.append(f"\nlatency p50 {report.p(0.5) * 1000:.0f} ms   p95 {report.p(0.95) * 1000:.0f} ms"
                      f"   peak RSS {peak_rss_mb():.0f} MB")

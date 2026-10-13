@@ -198,7 +198,9 @@ def transcripts(path: Path) -> list[Item]:
     try:
         return transcribe_items(path)
     except Exception as error:
-        print(f"  ! transcript failed for {path.name}: {type(error).__name__}: {error}")
+        # A silent clip is normal, not a failure: only real errors are worth reporting.
+        if "no audio stream" not in str(error):
+            print(f"  ! transcript failed for {path.name}: {type(error).__name__}: {error}")
         return []
 
 

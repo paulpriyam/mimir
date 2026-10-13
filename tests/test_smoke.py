@@ -3,7 +3,7 @@ from pathlib import Path
 from mimir.cli import main
 from mimir.config import MAIN_DB
 from mimir.embed import FakeEmbedder
-from mimir.evals import evaluate
+from mimir.evals import TagRow, evaluate
 from mimir.search import Searcher
 from mimir.store import Store
 
@@ -46,3 +46,16 @@ def test_eval_harness_reports_positives_and_negatives(tmp_path):
     assert report.rows["exact"].at1 == 1
     assert report.rows["word"].at1 == 1
     assert report.rows["ALL"].false_positives == 0
+
+
+def test_eval_harness_separates_empty_misses_from_wrong_ones():
+    # A miss where nothing came back is a gate or retrieval problem; a miss where something
+    # else came first is a ranking problem. They are counted apart because the fixes differ.
+    row = TagRow()
+    row.add(None, negative=False, returned_any=False)   # found nothing
+    row.add(None, negative=False, returned_any=True)    # found the wrong thing
+    row.add(1, negative=False, returned_any=True)       # correct
+    assert row.empty_misses == 1
+    assert row.wrong_misses == 1
+    assert row.at1 == 1
+    assert row.positives == 3

@@ -32,11 +32,25 @@ TRANSCRIBE = os.environ.get("MIMIR_TRANSCRIBE", "1") != "0"
 # meaning match. Also what makes "nothing found" honest. DigUp's default, kept.
 Z_GATE = 2.0
 # Centring every score on the query's own scale (Z_GATE) throws away the absolute level, and
-# that level is the only thing that says "nothing here resembles this query at all". On the
-# media eval the gate alone let both negatives through (cos 0.645, 0.669) while every true
-# positive scored cos >= 0.696. So a meaning match must clear both: stand out, and be close
-# enough in absolute terms. Provisional: two negatives is thin evidence, and the floor is
-# model- and modality-dependent. The evals are what tune it.
+# that level is the only thing that says "nothing here resembles this query at all". So a
+# meaning match must clear both: stand out, and be close enough in absolute terms.
+#
+# 0.68 is not tuned to the eval set; it is the corpus's own typical self-similarity. Measured
+# on the testbed, two unrelated images sit at cos 0.680 (sd 0.050). A query that scores below
+# that against an image is not closer to it than the images are to each other, so calling it a
+# match is unjustified. Ideally this is derived per index rather than hardcoded; for now it is
+# a constant with the reasoning written down.
+#
+# The measured trade-off, so nobody re-litigates it blind. On evals/media.json the eight
+# negatives top out at 0.663. Lowering the floor to 0.665 would win three paraphrases
+# ("percussion kit you sit behind" 0.674, "bird of prey that hunts at night" 0.665, "what
+# should I pick up at the store" 0.669), lifting paraphrase R@1 from 0.60 to 0.67 and R@5 from
+# 0.67 to 0.87 - but it would sit 0.002 above the worst negative, which is overfitting to eight
+# samples. Raising it costs real answers. Kept at 0.68 for the margin.
+#
+# What the floor does NOT fix: two paraphrase misses had the expected file below the strongest
+# negative (0.648 and 0.595), which no gate can repair. Those need better retrieval, not a
+# different threshold.
 COS_FLOOR = 0.68
 # How much finding the query's words counts against meaning (Searcher.wordWeight in DigUp).
 WORD_WEIGHT = 2.0

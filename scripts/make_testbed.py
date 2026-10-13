@@ -51,6 +51,13 @@ DOCUMENTS = {
 
 HANDBOOK_MARKER = "Section 42 covers the fire drill procedure and the assembly point"
 
+# An 18 s video: penguin, then zebra, then parrot, 6 s each. Encoded with PyAV (bundled
+# libx264), so the video frame path is exercised by a real file rather than only in theory.
+FPS = 24
+VIDEO_SOURCES = [("penguin", "Animals-Penguin.jpg"), ("zebra", "Animals-Zebra.jpg"), ("parrot", "Animals-Parrot.jpg")]
+VIDEO_SECONDS = 6
+VIDEO_SIZE = 768
+
 
 def run(*cmd: str) -> None:
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -152,6 +159,43 @@ def make_pdfs(out: Path) -> dict[str, str]:
     return truth
 
 
+def make_videos(out: Path, image_dir: Path) -> dict[str, str]:
+    """A video cut into known moments, so a frame hit can be checked for the right timestamp."""
+    try:
+        import av
+        import numpy as np
+        from PIL import Image
+    except ImportError as error:
+        print(f"note: {error}; no video", file=sys.stderr)
+        return {}
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "zoo.mp4"
+
+    frames = []
+    for _, name in VIDEO_SOURCES:
+        source = image_dir / name
+        if not source.exists():
+            print(f"note: {source.name} missing; no video", file=sys.stderr)
+            return {}
+        picture = Image.open(source).convert("RGB").resize((VIDEO_SIZE, VIDEO_SIZE))
+        frames.extend([np.asarray(picture)] * (VIDEO_SECONDS * FPS))
+
+    container = av.open(str(path), mode="w")
+    stream = container.add_stream("libx264", rate=FPS)
+    stream.width, stream.height = VIDEO_SIZE, VIDEO_SIZE
+    stream.pix_fmt = "yuv420p"
+    for array in frames:
+        for packet in stream.encode(av.VideoFrame.from_ndarray(array, format="rgb24")):
+            container.mux(packet)
+    for packet in stream.encode():
+        container.mux(packet)
+    container.close()
+
+    moments = ", ".join(f"{name} {i * VIDEO_SECONDS}-{(i + 1) * VIDEO_SECONDS}s"
+                        for i, (name, _) in enumerate(VIDEO_SOURCES))
+    return {"video/zoo.mp4": moments}
+
+
 def main() -> int:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else "~/mimir-testbed").expanduser()
     if root.exists():
@@ -163,6 +207,7 @@ def main() -> int:
     truth |= make_audio(root / "audio")
     truth |= make_screenshots(root / "screenshots")
     truth |= make_pdfs(root / "pdf")
+    truth |= make_videos(root / "video", root / "img")
     (root / "ground_truth.json").write_text(json.dumps(truth, indent=1, ensure_ascii=False))
     print(f"testbed in {root}: {len(truth)} files with known content")
     return 0

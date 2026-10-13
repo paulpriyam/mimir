@@ -21,7 +21,34 @@
     {"q": "may I keep pets in the apartment", "expect": ["pdf/lease.pdf"], "tag": "pdf-page"},
     {"q": "fire drill procedure", "expect": ["pdf/handbook.pdf@6-6"], "tag": "pdf-page"},
 
-    {"q": "quantum blockchain yoga", "expect": [], "tag": "negative"},
-    {"q": "a helicopter landing on the moon", "expect": [], "tag": "negative"}
+    {"q": "a penguin", "kind": "video", "expect": ["video/zoo.mp4@0-6"], "tag": "video-moment"},
+    {"q": "a zebra", "kind": "video", "expect": ["video/zoo.mp4@6-12"], "tag": "video-moment"},
+    {"q": "a parrot", "kind": "video", "expect": ["video/zoo.mp4@12-18"], "tag": "video-moment"},
+    {"q": "black and white striped animal", "kind": "video", "expect": ["video/zoo.mp4@6-12"], "tag": "video-moment"},
+
+    {"q": "flightless seabird in a tuxedo", "expect": ["img/Animals-Penguin.jpg"], "tag": "paraphrase"},
+    {"q": "black and white striped animal", "expect": ["img/Animals-Zebra.jpg"], "tag": "paraphrase"},
+    {"q": "string instrument played with a bow", "expect": ["img/Instruments-Violin.jpg"], "tag": "paraphrase"},
+    {"q": "tall yellow flower that follows the sun", "expect": ["img/Flowers-Sunflower.jpg"], "tag": "paraphrase"},
+    {"q": "bird of prey that hunts at night", "expect": ["img/Animals-Owl.jpg"], "tag": "paraphrase"},
+    {"q": "percussion kit you sit behind", "expect": ["img/Instruments-Drum.jpg"], "tag": "paraphrase"},
+    {"q": "what should I pick up at the store", "expect": ["audio/speech_groceries.wav"], "tag": "paraphrase"},
+    {"q": "the announcement about a plane being late", "expect": ["audio/speech_flight_delay.wav"], "tag": "paraphrase"},
+    {"q": "how long should the dessert bake", "expect": ["audio/speech_cake_recipe.wav"], "tag": "paraphrase"},
+    {"q": "how did the company do last quarter", "expect": ["audio/speech_revenue.wav"], "tag": "paraphrase"},
+    {"q": "rules about keeping animals at home", "expect": ["pdf/lease.pdf"], "tag": "paraphrase"},
+    {"q": "what to do when the alarm sounds", "expect": ["pdf/handbook.pdf@6-6"], "tag": "paraphrase"},
+    {"q": "the bill I have not paid yet", "expect": ["screenshots/shot_invoice.png"], "tag": "paraphrase"},
+    {"q": "who is responsible for the daily sync", "expect": ["screenshots/shot_meeting.png"], "tag": "paraphrase"},
+    {"q": "what is the weather like in India", "expect": ["screenshots/shot_weather.png"], "tag": "paraphrase"},
+
+    {"q": "quantum blockchain yoga retreat", "expect": [], "tag": "negative"},
+    {"q": "a helicopter landing on the moon", "expect": [], "tag": "negative"},
+    {"q": "the source code for the Linux kernel scheduler", "expect": [], "tag": "negative"},
+    {"q": "a photograph of my grandmother at her birthday", "expect": [], "tag": "negative"},
+    {"q": "the 2019 tax return for a company in Iceland", "expect": [], "tag": "negative"},
+    {"q": "how do I replace a bicycle chain", "expect": [], "tag": "negative"},
+    {"q": "the mating calls of the humpback whale", "expect": [], "tag": "negative"},
+    {"q": "a list of every airport in Norway", "expect": [], "tag": "negative"}
   ]
 }
